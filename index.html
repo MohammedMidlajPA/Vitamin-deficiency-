@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>NUTRIVISION - AI Nutritional Health Assistant</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script> <!-- jsPDF Library -->
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      background-color: #f9f9f9;
+      color: #333;
+      line-height: 1.6;
+    }
+    .container {
+      max-width: 700px;
+      margin: auto;
+      padding: 20px;
+      background-color: white;
+      border-radius: 8px;
+      box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+    }
+    h1 {
+      text-align: center;
+      color: #0044cc;
+    }
+    textarea, button, input {
+      width: 100%;
+      padding: 10px;
+      margin: 10px 0;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 16px;
+    }
+    button {
+      background-color: #0044cc;
+      color: white;
+      border: none;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    button:hover {
+      background-color: #003399;
+    }
+    .response, .questions, .final-report {
+      margin-top: 20px;
+      padding: 15px;
+      background-color: #eef6fc;
+      border-left: 5px solid #0044cc;
+      border-radius: 4px;
+      white-space: pre-wrap;
+      font-size: 15px;
+      color: #222;
+    }
+    .error {
+      color: red;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>NUTRIVISION</h1>
+    
+    <h3>Step 1: Describe Your Symptoms</h3>
+    <textarea id="imageDescriptionInput" placeholder="Describe the appearance of your eyes, lips, tongue, or skin. For example, do you notice any discoloration, swelling, dryness, etc.?"></textarea>
+    <button onclick="analyzeImageDescriptions()">Analyze Description</button>
+    <div id="imageAnalysis" class="response"></div>
+
+    <h3>Step 2: Follow-up Questions</h3>
+    <div id="followUpSection" style="display: none;">
+      <div id="followUpQuestions" class="questions"></div>
+      <textarea id="followUpResponse" placeholder="Enter your answer here..."></textarea>
+      <button onclick="submitFollowUpResponse()">Submit Answer</button>
+    </div>
+
+    <h3>Step 3: Personalized Advice</h3>
+    <button id="adviceBtn" style="display:none;" onclick="getPersonalizedAdvice()">Get Personalized Advice</button>
+    <div id="advice" class="response"></div>
+
+    <h3>Step 4: Final Report</h3>
+    <button id="reportBtn" style="display:none;" onclick="generateFinalReport()">Generate Final Report</button>
+    <div id="finalReport" class="final-report"></div>
+    <div id="reportOptions" style="display:none;">
+      <button onclick="downloadPDF()">Download Report as PDF</button>
+      <button onclick="generateShareableLink()">Generate Shareable Link</button>
+      <div id="shareableLink" class="response"></div>
+    </div>
+  </div>
+
+  <script>
+    const apiKey = ""; // Replace with your OpenAI API key
+    let conversationHistory = [];
+    let initialSymptoms = '';
+    let followUpCount = 0; // Track the number of follow-up questions asked
+
+    async function fetchOpenAIResponse(payload, delay = 10000) {
+      while (true) {
+        try {
+          const response = await fetch("https://api.openai.com/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${apiKey}`
+            },
+            body: JSON.stringify(payload)
+          });
+
+          if (response.ok) {
+            return await response.json();
+          } else if (response.status === 429) {
+            console.warn("Rate limit hit. Retrying in " + delay / 1000 + " seconds...");
+            await new Promise(resolve => setTimeout(resolve, delay));
+          } else {
+            throw new Error(`HTTP error! Status: ${response.status}`);
+          }
+        } catch (error) {
+          console.error("Error during API request:", error);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+    }
+
+    async function analyzeImageDescriptions() {
+      const imageDescriptionInput = document.getElementById('imageDescriptionInput').value;
+      const imageAnalysisElement = document.getElementById('imageAnalysis');
+
+      if (!imageDescriptionInput) {
+        imageAnalysisElement.innerHTML = "<span class='error'>Please describe your symptoms.</span>";
+        return;
+      }
+
+      initialSymptoms = imageDescriptionInput; // Save the initial symptoms for further use
+      imageAnalysisElement.innerHTML = "Analyzing descriptions...";
+
+      conversationHistory = [
+        { role: "system", content: "You are a health advisor specializing in detecting vitamin deficiencies based on the user's descriptions of symptoms." },
+        { role: "user", content: initialSymptoms }
+      ];
+
+      try {
+        const data = await fetchOpenAIResponse({ model: "gpt-3.5-turbo", messages: conversationHistory });
+        console.log("API Response:", data);
+
+        if (data.choices && data.choices.length > 0) {
+          const predictedDeficiency = data.choices[0].message.content;
+          imageAnalysisElement.innerHTML = `Predicted Deficiency: ${predictedDeficiency}`;
+          conversationHistory.push({ role: "assistant", content: predictedDeficiency });
+          document.getElementById('followUpSection').style.display = "block";
+          generateFollowUpQuestion(); // Start follow-up questions
+        } else {
+          imageAnalysisElement.innerHTML = "<span class='error'>No response received from OpenAI. Please try again later.</span>";
+        }
+      } catch (error) {
+        imageAnalysisElement.innerHTML = "<span class='error'>An error occurred: " + error.message + "</span>";
+      }
+    }
+
+    async function generateFollowUpQuestion() {
+      const followUpQuestionsElement = document.getElementById('followUpQuestions');
+
+      if (followUpCount >= 4) {
+        // After 4 follow-up questions, move to personalized advice
+        document.getElementById('adviceBtn').style.display = "block";
+        followUpQuestionsElement.innerHTML += "<br><span class='success'>You have answered all follow-up questions. Please proceed to get personalized advice.</span>";
+        return;
+      }
+
+      followUpQuestionsElement.innerHTML = "Generating follow-up question...";
+
+      conversationHistory.push({ role: "system", content: `Based on the user's symptoms (${initialSymptoms}), generate a follow-up question to gather more details.` });
+
+      try {
+        const data = await fetchOpenAIResponse({ model: "gpt-3.5-turbo", messages: conversationHistory });
+        console.log("API Response:", data);
+
+        if (data.choices && data.choices.length > 0) {
+          const followUpQuestion = data.choices[0].message.content;
+          followUpQuestionsElement.innerHTML = `<strong>Assistant:</strong> ${followUpQuestion}`;
+          conversationHistory.push({ role: "assistant", content: followUpQuestion });
+          followUpCount++;
+        } else {
+          followUpQuestionsElement.innerHTML = "<span class='error'>No follow-up questions generated. Please try again later.</span>";
+        }
+      } catch (error) {
+        followUpQuestionsElement.innerHTML = "<span class='error'>An error occurred: " + error.message + "</span>";
+      }
+    }
+
+    async function submitFollowUpResponse() {
+      const followUpResponse = document.getElementById('followUpResponse').value;
+      const followUpQuestionsElement = document.getElementById('followUpQuestions');
+
+      if (!followUpResponse) {
+        followUpQuestionsElement.innerHTML += "<br><span class='error'>Please enter your answer.</span>";
+        return;
+      }
+
+      followUpQuestionsElement.innerHTML += `<br><strong>You:</strong> ${followUpResponse}`;
+      conversationHistory.push({ role: "user", content: followUpResponse });
+
+      // Generate the next follow-up question (up to 4 questions)
+      await generateFollowUpQuestion();
+
+      document.getElementById('followUpResponse').value = "";
+    }
+
+    async function getPersonalizedAdvice() {
+      const adviceElement = document.getElementById('advice');
+      adviceElement.innerHTML = "Generating personalized advice...";
+
+      conversationHistory.push({ role: "user", content: `Based on the symptoms I described and the follow-up questions, can you provide personalized advice for improving my condition related to potential vitamin deficiency?` });
+
+      try {
+        const data = await fetchOpenAIResponse({ model: "gpt-3.5-turbo", messages: conversationHistory });
+        console.log("API Response:", data);
+
+        if (data.choices && data.choices.length > 0) {
+          adviceElement.innerHTML = data.choices[0].message.content;
+          conversationHistory.push({ role: "assistant", content: data.choices[0].message.content });
+          document.getElementById('reportBtn').style.display = "block";
+        } else {
+          adviceElement.innerHTML = "<span class='error'>No advice generated. Please try again later.</span>";
+        }
+      } catch (error) {
+        adviceElement.innerHTML = "<span class='error'>An error occurred: " + error.message + "</span>";
+      }
+    }
+
+    async function generateFinalReport() {
+      const finalReportElement = document.getElementById('finalReport');
+      finalReportElement.innerHTML = "Generating final report...";
+
+      conversationHistory.push({ role: "user", content: "Please generate a final report of our discussion, including advice based on the symptoms and follow-up questions." });
+
+      try {
+        const data = await fetchOpenAIResponse({ model: "gpt-3.5-turbo", messages: conversationHistory });
+        console.log("API Response:", data);
+
+        if (data.choices && data.choices.length > 0) {
+          const finalReportContent = data.choices[0].message.content;
+          finalReportElement.innerHTML = finalReportContent;
+          document.getElementById('reportOptions').style.display = "block";
+        } else {
+          finalReportElement.innerHTML = "<span class='error'>No report generated. Please try again later.</span>";
+        }
+      } catch (error) {
+        finalReportElement.innerHTML = "<span class='error'>An error occurred: " + error.message + "</span>";
+      }
+    }
+
+    function downloadPDF() {
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+      const reportContent = document.getElementById('finalReport').innerText;
+
+      doc.text("NUTRIVISION Report", 10, 10);
+      doc.text(reportContent, 10, 20);
+      doc.save("NUTRIVISION_Report.pdf");
+    }
+
+    function generateShareableLink() {
+      const { jsPDF } = window.jspdf;
+      const linkElement = document.getElementById('shareableLink');
+      const doc = new jsPDF();
+      const reportContent = document.getElementById('finalReport').innerText;
+
+      // Create the PDF
+      doc.text("NUTRIVISION Report", 10, 10);
+      doc.text(reportContent, 10, 20);
+
+      // Convert PDF to Blob
+      const pdfBlob = doc.output('blob');
+
+      // Create a link for the Blob
+      const pdfURL = URL.createObjectURL(pdfBlob);
+      linkElement.innerHTML = `Shareable link: <a href="${pdfURL}" target="_blank" download="NUTRIVISION_Report.pdf">${pdfURL}</a>`;
+    }
+  </script>
+</body>
+</html>
